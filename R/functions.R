@@ -1,27 +1,25 @@
 ## functions
 
-run_titrator <- function(data_dir, sal_mass_file, date_cal, cal_file){
+run_titrator <- function(data_dir, sal_mass_file, date_cal, cal_file, output){
   
+  ##### titration##########
   Mass<-read.csv(sal_mass_file, header=T, sep=",", na.string="NA", as.is=T) 
-  # only keep sample ID and weight and remove the extra stuff at the bottom
-  Mass <- Mass[1:nrows,c('Sample.ID1','Weight..g.','Sample.Index', 'Salinity')]
-  ## parse through all the data in the one file ###
   sample_names <- Mass$Sample.ID1
   
   #### pH Calibration #####
-  pHCal<-read.csv(cal_file) # read in the pH Calibration file
+  pHCal <- read.csv(cal_file) # read in the pH Calibration file
   
   ## read in sample files
   files_to_parse <- list.files(data_dir, pattern = "*.csv")
   
   #select the calibration for the correct date
-  pHData<-pHCal[pHCal$Date==date,]
+  pHData <- pHCal[pHCal$Date==date_cal,]
   
   # calculate pH 3 and 3.5 based on the slope and intercept from pH 4, 7, and 10 calibration
-  mod.pH<-lm(c(pHData$pH4, pHData$pH7, pHData$pH10)~c(4,7,10)) # linear model
+  mod.pH <- lm(c(pHData$pH4, pHData$pH7, pHData$pH10)~c(4,7,10)) # linear model
   
-  
-  png(paste0(gsub('\\/','_',date),'_pHmvplot.png'), height = 400, width = 400)
+  plotout <- file.path( data_dir, paste0(gsub('\\/','_', date_cal),'_pHmvplot.png'))
+  png(plotout, height = 400, width = 400)
   plot(c(4,7,10), c(pHData$pH4, pHData$pH7, pHData$pH10), xlab = 'pH', ylab = 'mv')
   lines(c(4,7,10), predict(mod.pH))
   R2<-summary(mod.pH)$r.squared
@@ -50,21 +48,27 @@ run_titrator <- function(data_dir, sal_mass_file, date_cal, cal_file){
   
   sample_names_list <- split( AllData , f = AllData$ID1)
   
-  ##### titration##########
-  #create an empty matrix to put the TA values in
-  nrows<-nrow(Mass) # -1 because there is an extra line in the mass file
-  TA <- data.frame(matrix(nrow = nrows, ncol = 4))
-  rownames(TA)<-Mass$Sample.ID1[1:nrows]
-  colnames(TA)<-c("SampleID",'TA','Mass','Sample.Index')
+  
+  
+  missing_samps <- names(sample_names_list)[ which(!names(sample_names_list) %in% Mass$Sample.ID1)]
+  print( paste('warning, no Mass/Salinity entries for these samples:', paste( missing_samps, collapse = ',')))
+  
+  
+  indx <- which(names(sample_names_list) %in% Mass$Sample.ID1)
+  sample_names_list <- sample_names_list[indx]
+  
+  
+  print('processing ...')
   
   out <- lapply(names(sample_names_list), function(name, data = sample_names_list, acid = 0.100025) {
     Data <- data[[name]]
     mV <- which(Data$mV<pH3 & Data$mV>pH35) 
     d_in <- (-0.00000400*mean(Data$Temperature[mV], na.rm=T)^2-0.0001108*mean(Data$Temperature[mV], na.rm=T)+1.02878) #A23
-    s <- Mass[Mass$Sample.ID1==name,4]
-    mass <- Mass[Mass$Sample.ID1==name,2]
+    s <- Mass[Mass$Sample.ID1==name,'Salinity']
+    mass <- Mass[Mass$Sample.ID1==name,"Weight..g."]
     sample.index <- Mass[Mass$Sample.ID1==name,3]# this is the order that the sample was run
-    tot_alk <- 1000000*at(S=s,T=mean(Data$Temperature[mV], na.rm=T), C = acid, d = d_in, pHTris = NULL, ETris = NULL, weight = mass, E=Data$mV[mV], volume=Data$Volume[mV])
+    print(name)
+      tot_alk <- 1000000*at(S=s,T = mean(Data$Temperature[mV], na.rm=T), C = acid, d = d_in, pHTris = NULL, ETris = NULL, weight = mass, E=Data$mV[mV], volume=Data$Volume[mV])
     return(data.frame(name, tot_alk, mass, s, sample.index))
   })
   
@@ -77,7 +81,10 @@ run_titrator <- function(data_dir, sal_mass_file, date_cal, cal_file){
   out[rownames(Mass),'evap'] <- out[rownames(Mass) ,'tot_alk']*31/Mass[ rownames(Mass),'salt']
   
   #exports your data as a CSV file
-  write.table(out,"07212023/data_output/practiceoutput 20230721.csv",sep=",", row.names=FALSE)
+  
+  print(paste('done, writing file to:',output ))
+  
+  write.table(out,output,sep=",", row.names=FALSE)
   
 }
 
@@ -86,8 +93,7 @@ run_titrator <- function(data_dir, sal_mass_file, date_cal, cal_file){
 #at function is based on code in saecarb package by Steeve Comeau, Heloise Lavigne and Jean-Pierre Gattuso
 ##############################################################################################
 
-at<-function (S = 35, T = 25, C = 0.1, d = 1, pHTris = NULL, ETris = NULL, 
-              weight, E, volume) 
+at<-function (S = 35, T = 25, C = 0.1, d = 1, pHTris = NULL, ETris = NULL, weight, E, volume) 
 {
   R <- 8.31447215
   F <- 96485.339924
